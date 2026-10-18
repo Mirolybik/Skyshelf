@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-accent="blue">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#081426" />
+    <title>SkyShelf · Design system</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css?v=1.0.0" />
+    <style>
+      body { background: #050d1a; }
+      .spec { max-width: 1440px; margin: auto; padding: 44px 54px 100px; }
+      .spec-header { display:flex; justify-content:space-between; align-items:center; padding-bottom:30px; border-bottom:1px solid #23334b; }
+      .spec-header p { margin-top:6px; }
+      .spec-tag { padding:7px 11px; border:1px solid #35517a; border-radius:999px; color:#8eb4f4; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+      .spec-section { padding:62px 0; border-bottom:1px solid #192a43; }
+      .spec-label { display:grid; grid-template-columns:260px 1fr; gap:50px; }
+      .spec-label > aside h2 { font-size:20px; }
+      .spec-label > aside p { margin-top:8px; font-size:13px; }
+      .spec-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+      .swatch { min-height:155px; padding:18px; display:flex; flex-direction:column; justify-content:flex-end; border:1px solid #ffffff12; border-radius:16px; }
+      .swatch b { font-family:Atyp; font-size:17px; }
+      .swatch code { color:#a5b6cf; }
+      .type-stack { display:grid; gap:30px; }
+      .type-hero { font:600 68px/.96 Atyp; letter-spacing:-.055em; }
+      .type-title { font:600 36px/1.08 Atyp; letter-spacing:-.04em; }
+      .type-body { max-width:680px; font:17px/1.65 SF; color:#9cafca; }
+      .spec-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+      .component-card { padding:24px; border:1px solid #28405f; border-radius:18px; background:#0d1c32; }
+      .component-card h3 { margin-bottom:18px; }
+      .demo-input { min-width:260px; padding:13px 14px; border:1px solid #2b4262; border-radius:10px; background:#081426; color:#f4f7fe; }
+      .file-demo { grid-column:span 2; }
+      .file-line { display:grid; grid-template-columns:48px 1fr auto; gap:14px; align-items:center; padding:14px 0; border-top:1px solid #203451; }
+      .file-mark { width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:#173b75;color:#8ab5ff;font:600 12px Atyp; }
+      .file-line small,.token-note { color:#8195b3; }
+      .project-demo { grid-column:span 2; overflow:hidden; position:relative; min-height:280px; background:radial-gradient(circle at 82% 20%,#4b7bff55,transparent 30%),linear-gradient(145deg,#132b4d,#091526); }
+      .project-demo:after { content:""; position:absolute; width:180px;height:180px;right:-30px;top:-50px;border:1px solid #9fc0ff44;border-radius:50%;box-shadow:0 0 70px #397cff40 inset; }
+      .project-demo h3 { max-width:390px; margin:54px 0 8px; font-size:30px; }
+      .progress-demo { height:6px;margin-top:24px;border-radius:9px;background:#213653;overflow:hidden; }
+      .progress-demo i { display:block;width:72%;height:100%;background:linear-gradient(90deg,#528aff,#a282ff); }
+      .security-demo { grid-column:span 2; display:grid;grid-template-columns:90px 1fr;gap:22px;align-items:center; }
+      .shield-mark { width:90px;height:90px;display:grid;place-items:center;border-radius:26px;background:radial-gradient(circle,#3f88ff55,#15345f);border:1px solid #6197ed55;font:600 18px Atyp; }
+      .status-list { display:flex;flex-wrap:wrap;gap:8px;margin-top:15px; }
+      .status-list span { padding:6px 9px;border:1px solid #315079;border-radius:7px;color:#9fb7d9;font-size:12px; }
+      .space-scale { display:flex;align-items:flex-end;gap:18px; }
+      .space-scale i { display:block;width:44px;background:#528aff;border-radius:8px 8px 2px 2px; }
+      .space-scale span { display:grid;gap:8px;text-align:center;color:#8094b2;font-size:11px; }
+      @media(max-width:900px){.spec{padding:28px 20px}.spec-label{grid-template-columns:1fr}.spec-grid{grid-template-columns:1fr 1fr}.file-demo,.project-demo,.security-demo{grid-column:span 2}.type-hero{font-size:48px}}
+    </style>
+  </head>
+  <body>
+    <main class="spec">
+      <header class="spec-header">
+        <div><a class="brand" href="index.html#home"><span class="brand-icon">☁</span>SkyShelf</a><p>UI inventory · Final 1.0 · Figma handoff</p></div>
+        <span class="spec-tag">Dark student cloud</span>
+      </header>
+
+      <section class="spec-section spec-label">
+        <aside><h2>01 · Цвет</h2><p>Семантические токены интерфейса.</p></aside>
+        <div class="spec-grid">
+          <div class="swatch" style="background:#081426"><b>Background</b><code>#081426</code></div>
+          <div class="swatch" style="background:#0d1c32"><b>Surface</b><code>#0D1C32</code></div>
+          <div class="swatch" style="background:#12233e"><b>Raised</b><code>#12233E</code></div>
+          <div class="swatch" style="background:#528aff"><b>Primary</b><code>#528AFF</code></div>
+          <div class="swatch" style="background:#a282ff"><b>Violet</b><code>#A282FF</code></div>
+          <div class="swatch" style="background:#45c4ad"><b>Success</b><code>#45C4AD</code></div>
+          <div class="swatch" style="background:#ff8995"><b>Danger</b><code>#FF8995</code></div>
+          <div class="swatch" style="background:#23334b"><b>Border</b><code>#23334B</code></div>
+        </div>
+      </section>
+
+      <section class="spec-section spec-label">
+        <aside><h2>02 · Типографика</h2><p>Atyp Display — заголовки. SF Pro Display — интерфейс и текст.</p></aside>
+        <div class="type-stack"><div class="type-hero">От идеи до<br>готовой сдачи.</div><div class="type-title">Рабочая полка проекта</div><div class="type-body">SkyShelf собирает файлы, участников, версии, чек-лист и дедлайн в одном защищённом пространстве.</div><div class="eyebrow">Protected student cloud · 12 / 600</div></div>
+      </section>
+
+      <section class="spec-section spec-label">
+        <aside><h2>03 · Действия</h2><p>Основные состояния кнопок и полей.</p></aside>
+        <div class="component-card"><div class="spec-row"><button class="btn primary">Создать проект →</button><button class="btn">Загрузить файл</button><button class="btn glass">Подробнее</button><button class="btn danger">Удалить</button><span class="badge active">Готов к сдаче</span><span class="badge">Версия 3</span></div><div class="spec-row" style="margin-top:22px"><input class="demo-input" value="Поиск по файлам" aria-label="Пример поля"><select class="demo-input" aria-label="Пример списка"><option>Участник</option></select></div></div>
+      </section>
+
+      <section class="spec-section spec-label">
+        <aside><h2>04 · Компоненты</h2><p>Карточки, строки файлов, прогресс и защита.</p></aside>
+        <div class="spec-grid">
+          <article class="component-card project-demo"><span class="eyebrow">СПО · ЭФБО-14-24</span><h3>SkyShelf · итоговый проект</h3><p>Командное облако с контролируемой сдачей</p><div class="progress-demo"><i></i></div><p class="token-note" style="margin-top:10px">72% · 5 из 7 шагов</p></article>
+          <article class="component-card file-demo"><h3>Файлы проекта</h3><div class="file-line"><span class="file-mark">PDF</span><div><b>Отчёт проекта.pdf</b><br><small>2,4 МБ · версия 3 · SHA‑256</small></div><span class="badge active">Итоговый</span></div><div class="file-line"><span class="file-mark">PPTX</span><div><b>Презентация.pptx</b><br><small>8,1 МБ · версия 5</small></div><span class="badge">Избранное</span></div></article>
+          <article class="component-card security-demo"><div class="shield-mark">AES</div><div><span class="eyebrow">Security state</span><h3 style="margin:6px 0">Данные защищены</h3><p>Шифрование AES‑256‑GCM, целостность SHA‑256, пароли Argon2id.</p><div class="status-list"><span>2FA включена</span><span>CSRF</span><span>HttpOnly</span></div></div></article>
+          <article class="component-card" style="grid-column:span 2"><h3>Spacing scale</h3><div class="space-scale"><span><i style="height:4px"></i>4</span><span><i style="height:8px"></i>8</span><span><i style="height:12px"></i>12</span><span><i style="height:16px"></i>16</span><span><i style="height:24px"></i>24</span><span><i style="height:32px"></i>32</span><span><i style="height:48px"></i>48</span><span><i style="height:64px"></i>64</span></div></article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

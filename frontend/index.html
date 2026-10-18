@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-accent="blue">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#081426" />
+    <meta
+      name="description"
+      content="SkyShelf — защищённое облачное пространство для учебных команд: версии, роли, чек-лист сдачи и ссылка преподавателю."
+    />
+    <title>SkyShelf — от идеи до готовой сдачи</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="assets/AtypDisplay-Semibold.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="assets/SF-Pro-Display-Regular.otf" as="font" type="font/otf" crossorigin />
+    <link rel="stylesheet" href="style.css?v=1.0.0" />
+    <script src="app.js?v=1.0.0" defer></script>
+  </head>
+  <body>
+    <div id="app"><div class="loading">Загружаем ваше пространство…</div></div>
+    <dialog id="modal" aria-labelledby="modal-title"></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <input
+      type="file"
+      id="upload-input"
+      multiple
+      hidden
+      accept=".txt,.md,.csv,.pdf,.png,.jpg,.jpeg,.zip,.docx,.xlsx,.pptx"
+    />
+  </body>
+</html>
