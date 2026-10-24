@@ -4,15 +4,11 @@
 
 const { BadRequestError } = require('./errors');
 
-/** Базовая сущность: маппинг строк БД (snake_case) в поля домена (camelCase). */
 class Entity {
   static columns = [];
   constructor(row = {}) { Object.assign(this, this.constructor.fromRow(row)); }
   static fromRow(row) {
     const out = {};
-    // this — класс-наследник: берём его собственный fieldMap (статика не наследуется как значение)
-    // принимаем и строку БД (snake_case), и plain-объект домена (camelCase):
-    // иначе поля вроде passwordHash/projectId молча теряются при insert()
     for (const [field, column] of Object.entries(this.fieldMap ?? Entity.fieldMap)) {
       out[field] = column in row ? row[column] : row[field];
     }
@@ -35,8 +31,9 @@ class Account extends Entity {
   view() {
     return {
       id: this.id, email: this.email, name: this.name, role: this.role, plan: this.plan,
-      theme: this.theme, accent: this.accent, blocked: this.blocked,
-      twoFactorEnabled: this.twoFactorEnabled, lastLoginAt: this.lastLoginAt, createdAt: this.createdAt,
+      theme: this.theme, accent: this.accent, blocked: Boolean(this.blocked),
+      twoFactorEnabled: Boolean(this.twoFactorEnabled), lastLoginAt: this.lastLoginAt ?? null,
+      createdAt: this.createdAt,
     };
   }
 }
@@ -54,9 +51,9 @@ class StoredFile extends Entity {
   };
   view() {
     return {
-      id: this.id, projectId: this.projectId, name: this.name, size: Number(this.size),
-      mimeType: this.mimeType, checksum: this.checksum, versionCount: Math.max(1, this.versionCount),
-      folderId: this.folderId, favorite: this.favorite, trashed: this.trashed,
+      id: this.id, projectId: this.projectId ?? null, name: this.name, size: Number(this.size),
+      mimeType: this.mimeType, checksum: this.checksum, versionCount: Math.max(1, Number(this.versionCount || 1)),
+      folderId: this.folderId ?? null, favorite: Boolean(this.favorite), trashed: Boolean(this.trashed),
       createdAt: this.createdAt, updatedAt: this.updatedAt,
     };
   }
@@ -71,7 +68,6 @@ class FileVersion extends Entity {
 }
 
 class ShareLink extends Entity {
-  /** token — SHA-256 от публичного токена. Сам токен в БД не хранится. */
   static fieldMap = {
     token: 'token', fileId: 'file_id', createdAt: 'created_at', expiresAt: 'expires_at',
     maxDownloads: 'max_downloads', downloadCount: 'download_count', passwordHash: 'password_hash',
@@ -79,8 +75,8 @@ class ShareLink extends Entity {
   view() {
     return {
       id: this.token, createdAt: this.createdAt, expiresAt: this.expiresAt,
-      passwordRequired: this.passwordHash != null, maxDownloads: this.maxDownloads,
-      downloadCount: this.downloadCount,
+      passwordRequired: this.passwordHash != null, maxDownloads: Number(this.maxDownloads || 0),
+      downloadCount: Number(this.downloadCount || 0),
     };
   }
 }
@@ -115,7 +111,13 @@ class AuditEvent extends Entity {
   };
 }
 
-/** Значения перечислений и справочники валидации (порт статических проверок Java-кода). */
+class PasswordResetToken extends Entity {
+  static fieldMap = {
+    tokenHash: 'token_hash', userId: 'user_id', createdAt: 'created_at',
+    expiresAt: 'expires_at', usedAt: 'used_at',
+  };
+}
+
 const Enums = {
   FILE_EXTENSIONS: new Set(['txt', 'md', 'csv', 'pdf', 'png', 'jpg', 'jpeg', 'zip', 'docx', 'xlsx', 'pptx']),
   FOLDER_COLORS: new Set(['blue', 'violet', 'mint', 'amber', 'cyan', 'rose']),
@@ -134,7 +136,6 @@ const Enums = {
   },
 };
 
-/** Строгие правила имён: без управляемых символов, «/», «\\», «.» и «..». */
 function validateName(value, max) {
   if (value == null) throw new BadRequestError('Укажите название.');
   const clean = String(value).trim();
@@ -146,5 +147,5 @@ function validateName(value, max) {
 
 module.exports = {
   Entity, Account, Folder, StoredFile, FileVersion, ShareLink, Project,
-  Membership, ProjectTask, SubmissionLink, AuditEvent, Enums, validateName,
+  Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken, Enums, validateName,
 };

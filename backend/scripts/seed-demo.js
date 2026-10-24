@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-/* Заполнение базы демонстрационными данными для тестового стенда (npm run seed).
-   Идемпотентен: повторный запуск не создаёт дубликатов. */
+/* Заполнение базы демонстрационными данными для тестового стенда (npm run seed). */
 'use strict';
 
 const { Database } = require('../src/db/database');
+const { MigrationRunner } = require('../src/db/migrate');
 const { CryptoService } = require('../src/services/crypto-service');
 const { Repositories } = require('../src/repositories');
 const { Account, Project, Membership, ProjectTask } = require('../src/domain/entities');
@@ -11,15 +11,18 @@ const { Account, Project, Membership, ProjectTask } = require('../src/domain/ent
 const DEMO_PASSWORD = 'SkyShelfDemo2026!';
 
 const ACCOUNTS = [
-  { email: 'demo@skyshelf.local', name: 'Демо Пользователь' },
-  { email: 'anna@skyshelf.local', name: 'Анна Смирнова' },
-  { email: 'ilya@skyshelf.local', name: 'Илья Ковалёв' },
+  { email: 'demo@skyshelf.local', name: 'Демо Пользователь', role: 'ADMIN', plan: 'TEAM' },
+  { email: 'anna@skyshelf.local', name: 'Анна Смирнова', role: 'USER', plan: 'PERSONAL' },
+  { email: 'ilya@skyshelf.local', name: 'Илья Ковалёв', role: 'USER', plan: 'START' },
 ];
 
 async function main() {
   const dbUrl = process.env.DATABASE_URL ||
     `postgres://${process.env.DB_USER || 'skyshelf'}:${process.env.DB_PASSWORD || 'skyshelf'}@${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'skyshelf'}`;
   const db = new Database(dbUrl);
+  const runner = new MigrationRunner(db.pool);
+  await runner.up();
+
   const repos = new Repositories(db);
   const crypto = new CryptoService(process.env.SKYSHELF_MASTER_KEY || 'U2t5U2hlbGYtRGVtby1NYXN0ZXItS2V5LTIwMjYhISE=');
 
@@ -31,9 +34,13 @@ async function main() {
       account = await repos.accounts.insert(new Account({
         email: spec.email,
         name: spec.name,
+        role: spec.role,
+        plan: spec.plan,
         passwordHash: await crypto.hashPassword(DEMO_PASSWORD),
       }));
-      created.push(`account ${spec.email}`);
+      created.push(`account ${spec.email} (${spec.role})`);
+    } else if (spec.role === 'ADMIN' && account.role !== 'ADMIN') {
+      await repos.accounts.update(account.id, { role: 'ADMIN', plan: spec.plan });
     }
     accounts.push(account);
   }
@@ -51,11 +58,13 @@ async function main() {
       accent: 'violet',
       cover: 'orb',
       status: 'IN_PROGRESS',
+      plan: 'TEAM',
     }));
     created.push('project');
+    await repos.memberships.insert(new Membership({ projectId: project.id, userId: owner.id, role: 'OWNER' }));
     await repos.memberships.insert(new Membership({ projectId: project.id, userId: member.id, role: 'MEMBER' }));
     await repos.memberships.insert(new Membership({ projectId: project.id, userId: reader.id, role: 'READER' }));
-    created.push('memberships MEMBER/READER');
+    created.push('memberships OWNER/MEMBER/READER');
 
     const checklist = [
       ['Спроектировать схему данных', true],
@@ -69,6 +78,11 @@ async function main() {
       await repos.tasks.insert(new ProjectTask({ projectId: project.id, title, completed, position: position++ }));
     }
     created.push('checklist tasks');
+  } else {
+    const ownerMember = await repos.memberships.find(project.id, owner.id);
+    if (!ownerMember) {
+      await repos.memberships.insert(new Membership({ projectId: project.id, userId: owner.id, role: 'OWNER' }));
+    }
   }
 
   console.log(created.length ? `seed: добавлено — ${created.join(', ')}` : 'seed: демо-данные уже в базе');

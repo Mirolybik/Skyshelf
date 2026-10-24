@@ -4,7 +4,7 @@
 const { Repository } = require('./repository');
 const {
   Account, Folder, StoredFile, FileVersion, ShareLink, Project,
-  Membership, ProjectTask, SubmissionLink, AuditEvent,
+  Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken,
 } = require('../domain/entities');
 
 class Accounts extends Repository {
@@ -19,7 +19,7 @@ class Folders extends Repository {
   constructor(db) { super(db, { table: 'folders', Entity: Folder }); }
   listFor(ownerId, projectId) {
     return projectId == null
-      ? this.findWhere("owner_id = $1 AND project_id IS NULL", [ownerId], 'name ASC')
+      ? this.findWhere('owner_id = $1 AND project_id IS NULL', [ownerId], 'name ASC')
       : this.findWhere('project_id = $1', [projectId], 'name ASC');
   }
   existsByNameInSpace(ownerId, projectId, name) {
@@ -32,11 +32,10 @@ class Folders extends Repository {
 
 class Files extends Repository {
   constructor(db) { super(db, { table: 'stored_files', Entity: StoredFile }); }
-  listByOwner(ownerId) { return this.findWhere('owner_id = $1', [ownerId], 'updated_at DESC'); }
+  listByOwner(ownerId) { return this.findWhere('owner_id = $1 AND project_id IS NULL', [ownerId], 'updated_at DESC'); }
   listByProject(projectId) { return this.findWhere('project_id = $1', [projectId], 'updated_at DESC'); }
-  /** Все файлы, видимые пользователю: личные + из проектов, где он состоит. */
   async listVisible(memberProjectIds, ownerId) {
-    if (!memberProjectIds.length) return this.listByOwner(ownerId).then((f) => f.filter((x) => x.projectId == null));
+    if (!memberProjectIds.length) return this.listByOwner(ownerId);
     const placeholders = memberProjectIds.map((_, i) => `$${i + 2}`).join(', ');
     return this.findWhere(
       `(owner_id = $1 AND project_id IS NULL) OR project_id IN (${placeholders})`,
@@ -120,7 +119,6 @@ class Submissions extends Repository {
 
 class Audits extends Repository {
   constructor(db) { super(db, { table: 'audit_events', Entity: AuditEvent }); }
-  /** Журнал, видимый участнику: его события + события его проектов. */
   listVisible(actorId, projectIds, limit) {
     const where = projectIds.length
       ? `(actor_id = $1 OR (project_id IS NOT NULL AND project_id IN (${projectIds.map((_, i) => `$${i + 2}`).join(', ')})))`
@@ -129,7 +127,22 @@ class Audits extends Repository {
   }
 }
 
-/** Реестр репозиториев — единая точка сборки зависимостей (composition root). */
+class PasswordResets extends Repository {
+  constructor(db) { super(db, { table: 'password_reset_tokens', Entity: PasswordResetToken, searchColumn: 'token_hash' }); }
+  insertToken(entity) { return this.insert(entity, { returningId: false }); }
+  async findValid(tokenHash) {
+    const { rows } = await this.client.query(
+      'SELECT * FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()',
+      [tokenHash]
+    );
+    return rows[0] ? new PasswordResetToken(rows[0]) : null;
+  }
+  async markUsed(tokenHash) {
+    await this.client.query('UPDATE password_reset_tokens SET used_at = now() WHERE token_hash = $1', [tokenHash]);
+  }
+  deleteByUser(userId) { return this.deleteWhere('user_id = $1', [userId]); }
+}
+
 class Repositories {
   constructor(db) {
     this.accounts = new Accounts(db);
@@ -142,11 +155,12 @@ class Repositories {
     this.tasks = new Tasks(db);
     this.submissions = new Submissions(db);
     this.audits = new Audits(db);
+    this.passwordResets = new PasswordResets(db);
     this.db = db;
   }
 }
 
 module.exports = {
   Accounts, Folders, Files, Versions, Shares, Projects, Memberships,
-  Tasks, Submissions, Audits, Repositories,
+  Tasks, Submissions, Audits, PasswordResets, Repositories,
 };
