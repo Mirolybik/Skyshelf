@@ -5,8 +5,10 @@ class AppConfig {
   constructor(env = process.env) {
     this.port = Number(env.PORT || 8080);
     this.host = env.SERVER_ADDRESS || '127.0.0.1';
-    this.publicOrigin = env.PUBLIC_ORIGIN || null; // используется HTTPS-редиректом стенда
+    this.publicOrigin = env.PUBLIC_ORIGIN || null;
     this.forceHttps = env.FORCE_HTTPS === 'true';
+    this.httpsKeyFile = env.HTTPS_KEY_FILE || null;
+    this.httpsCertFile = env.HTTPS_CERT_FILE || null;
 
     // PostgreSQL
     this.dbUrl = env.DATABASE_URL || env.DB_URL ||
@@ -17,8 +19,9 @@ class AppConfig {
     this.storageDir = env.APP_STORAGE_DIR || './data/objects';
     this.minio = {
       endpoint: env.MINIO_ENDPOINT || 'http://localhost:9000',
-      user: env.MINIO_USER || 'skyshelf',
-      password: env.MINIO_PASSWORD || '',
+      user: env.MINIO_USER || env.MINIO_ACCESS_KEY || 'skyshelf',
+      password: env.MINIO_PASSWORD || env.MINIO_SECRET_KEY || 'skyshelf-secret',
+      secretKey: env.MINIO_SECRET_KEY || env.MINIO_PASSWORD || 'skyshelf-secret',
       bucket: env.MINIO_BUCKET || 'skyshelf',
       accessKey: env.MINIO_ACCESS_KEY || env.MINIO_USER || 'skyshelf',
     };
@@ -28,6 +31,7 @@ class AppConfig {
 
     // Бизнес-параметры
     this.demo = env.APP_DEMO === 'true';
+    this.passwordRecoveryEnabled = env.APP_PASSWORD_RECOVERY !== 'false';
     this.quotaBytes = BigInt(env.APP_QUOTA_BYTES || '16106127360'); // START: 15 ГБ
     this.maxUploadBytes = 20 * 1024 * 1024;
     this.sessionTtlMs = 30 * 60 * 1000;
