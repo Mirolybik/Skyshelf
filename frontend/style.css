@@ -2279,3 +2279,31 @@ textarea:focus { outline:2px solid var(--accent); }
   .public-download h1 { font-size:31px; }
   .crypto-map { grid-template-columns:1fr; }.crypto-title{grid-column:auto}.crypto-map article{border-left:0;border-top:1px solid var(--border);min-height:auto}.security-score{width:72px;height:72px;font-size:19px}.security-score small{display:none}.phone-mock{min-width:120px;font-size:16px}.two-factor-visual{gap:10px}.two-factor-visual>i{width:20px}.activity-summary{display:none}.timeline-event .between{display:block}.timeline-event time{display:block;margin-top:3px}.admin-stats{grid-template-columns:1fr 1fr}.storage-facts{grid-template-columns:1fr}
 }
+
+/* Квоты команды и подписки */
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.quota-row:last-of-type { border-bottom: 0; }
+.quota-row .member-name { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.quota-row .member-name strong { font-size: 13px; overflow-wrap: anywhere; }
+.quota-row .member-name small { font-size: 11px; color: var(--muted); }
+.quota-row input { width: 112px; height: 38px; padding: 6px 9px; font-size: 13px; text-align: right; flex: none; }
+.quota-unit { font-size: 12px; color: var(--muted); flex: none; }
+.quota-form .muted { font-size: 12px; margin-bottom: 8px; }
+.quota-sub-form { display: grid; gap: 12px; margin-bottom: 18px; }
+.quota-sub-form label { max-width: 260px; }
+.quota-stats { grid-template-columns: repeat(4, 1fr); }
+.quota-sub-notice { margin: 14px 0 18px; line-height: 1.5; }
+.quota-panel small.muted { display: block; margin-top: 8px; line-height: 1.5; }
+.subscription-panel form { display: grid; gap: 12px; margin-top: 14px; }
+.subscription-panel label { max-width: 260px; }
+@media (max-width: 720px) {
+  .quota-stats { grid-template-columns: 1fr 1fr; }
+  .quota-row { flex-wrap: wrap; }
+  .quota-row .member-name { flex-basis: 100%; }
+}

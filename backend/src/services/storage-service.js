@@ -35,6 +35,27 @@ class StorageService {
   static ext(name) { const dot = String(name).lastIndexOf('.'); return dot < 0 ? '' : name.slice(dot + 1).toLowerCase(); }
   static mime(name) { return Enums.MIME_BY_EXT[StorageService.ext(name)] ?? 'application/octet-stream'; }
 
+  static humanBytes(value) {
+    const n = Number(value);
+    if (n < 1024) return `${n} Б`;
+    if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} КБ`;
+    if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} МБ`;
+    return `${(n / 1024 ** 3).toFixed(2)} ГБ`;
+  }
+
+  /** Проверка персональной квоты участника в проекте (распределение OWNER). */
+  async enforceMemberLimit(actor, projectId, incoming) {
+    if (projectId == null) return;
+    const quota = await this.projects.memberQuota(projectId, actor);
+    if (quota.mode !== 'ALLOCATED') return;
+    if (quota.used + incoming > quota.limit) {
+      throw new BadRequestError(
+        `Квота, выделенная вам владельцем проекта, исчерпана: ${StorageService.humanBytes(quota.used)} из ${StorageService.humanBytes(quota.limit)}. ` +
+        'Попросите владельца перераспределить объём.'
+      );
+    }
+  }
+
   /** Магические байты против расширения (порт validateFile). */
   static validateFile(name, bytes) {
     const ext = StorageService.ext(name);
@@ -170,6 +191,7 @@ class StorageService {
     } else folderId = null;
     const used = await this.used(owner, projectId);
     if (used + BigInt(bytes.length) > await this.limit(owner, projectId)) throw new BadRequestError('Недостаточно места в хранилище.');
+    await this.enforceMemberLimit(owner, projectId, BigInt(bytes.length));
     const objectKey = crypto.randomUUID();
     await this.putEncrypted(objectKey, bytes); // при откате транзакции объект останется осиротевшим — как in-memory cleanup у Spring
     const file = await this.files.insert({
@@ -192,6 +214,7 @@ class StorageService {
     StorageService.validateFile(clean, bytes);
     const used = await this.used(actor, file.projectId);
     if (used + BigInt(bytes.length) > await this.limit(actor, file.projectId)) throw new BadRequestError('Недостаточно места: версии файлов учитываются в квоте.');
+    await this.enforceMemberLimit(actor, file.projectId, BigInt(bytes.length));
     await this.ensureVersionRow(file);
     const number = Math.max(1, file.versionCount) + 1;
     const key = crypto.randomUUID();

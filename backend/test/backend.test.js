@@ -20,6 +20,7 @@ const { LocalObjectStore } = require('../src/services/object-store');
 const {
   Account, Folder, StoredFile, FileVersion, ShareLink, Project,
   Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken,
+  Subscription, QuotaAllocation,
 } = require('../src/domain/entities');
 
 /** Лёгкий In-Memory адаптер репозиториев для изолированного прогона всего HTTP-слоя и бизнес-логики. */
@@ -91,6 +92,11 @@ function createInMemoryRepos() {
   };
   folders.hasFiles = async (folderId) =>
     [...files.rows.values()].some((f) => f.folderId === folderId);
+  folders.listByProject = async (projectId) =>
+    [...folders.rows.values()].filter((f) => f.projectId === projectId).map((f) => folders._clone(f));
+  folders.deleteByProject = async (projectId) => {
+    for (const [k, f] of folders.rows) if (f.projectId === projectId) folders.rows.delete(k);
+  };
 
   const versions = new InMemoryTable(FileVersion);
   versions.listByFile = async (fileId) =>
@@ -180,6 +186,31 @@ function createInMemoryRepos() {
     for (const [k, r] of passwordResets.rows) if (r.userId === userId) passwordResets.rows.delete(k);
   };
 
+  const subscriptions = new InMemoryTable(Subscription);
+  subscriptions.findByAccount = async (accountId) => {
+    for (const r of subscriptions.rows.values()) if (r.scope === 'ACCOUNT' && r.accountId === accountId) return subscriptions._clone(r);
+    return null;
+  };
+  subscriptions.findByProject = async (projectId) => {
+    for (const r of subscriptions.rows.values()) if (r.scope === 'PROJECT' && r.projectId === projectId) return subscriptions._clone(r);
+    return null;
+  };
+  subscriptions.listDue = async (now = new Date()) =>
+    [...subscriptions.rows.values()]
+      .filter((r) => !r.purgedAt && new Date(r.graceUntil) <= new Date(now))
+      .map((r) => subscriptions._clone(r));
+
+  const quotas = new InMemoryTable(QuotaAllocation);
+  quotas.listByProject = async (projectId) =>
+    [...quotas.rows.values()].filter((q) => q.projectId === projectId).map((q) => quotas._clone(q));
+  quotas.find = async (projectId, userId) => {
+    for (const q of quotas.rows.values()) if (q.projectId === projectId && q.userId === userId) return quotas._clone(q);
+    return null;
+  };
+  quotas.deleteByProject = async (projectId) => {
+    for (const [k, q] of quotas.rows) if (q.projectId === projectId) quotas.rows.delete(k);
+  };
+
   const db = {
     transaction: async (fn) => fn(),
     close: async () => {},
@@ -187,7 +218,10 @@ function createInMemoryRepos() {
 
   return {
     db,
-    repos: { accounts, folders, files, versions, shares, projects, memberships, tasks, submissions, audits, passwordResets, db },
+    repos: {
+      accounts, folders, files, versions, shares, projects, memberships, tasks,
+      submissions, audits, passwordResets, subscriptions, quotas, db,
+    },
   };
 }
 
@@ -676,5 +710,216 @@ describe('SkyShelf Backend: Unit & Full User Scenario Smoke Tests', () => {
     });
     assert.equal(planRes.statusCode, 200);
     assert.equal(planRes.json().plan, 'PERSONAL');
+  });
+
+  test('11. Распределение квоты проекта OWNER-ом и персональные лимиты участников', async () => {
+    const projRes = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+      payload: { name: 'Проект с квотами', course: 'СПО' },
+    });
+    assert.equal(projRes.statusCode, 201);
+    const projectId = projRes.json().id;
+
+    for (const [email, role] of [['member@skyshelf.local', 'MEMBER'], ['reader@skyshelf.local', 'READER']]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/members`,
+        headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+        payload: { email, role },
+      });
+      assert.equal(res.statusCode, 201);
+    }
+
+    // Тариф TEAM покупается через админку: 500 ГБ и подписка на 30 дней.
+    const planRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/projects/${projectId}/plan`,
+      headers: { cookie: adminCookie, 'x-csrf-token': adminCsrf },
+      payload: { plan: 'TEAM' },
+    });
+    assert.equal(planRes.statusCode, 200);
+    assert.equal(planRes.json().plan, 'TEAM');
+
+    const memberUser = await services.repos.accounts.findByEmail('member@skyshelf.local');
+    const readerUser = await services.repos.accounts.findByEmail('reader@skyshelf.local');
+    const ownerUser = await services.repos.accounts.findByEmail('owner@skyshelf.local');
+    // В тесте 10 пароль member был восстановлен — сессия сброшена, входим заново.
+    const memberSess = await loginSession('member@skyshelf.local', 'NewMemberPassword2026!');
+
+    const quotaRes = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/quota`,
+      headers: { cookie: memberSess.cookie },
+    });
+    assert.equal(quotaRes.statusCode, 200);
+    assert.equal(quotaRes.json().total, 500 * 1024 ** 3);
+    assert.equal(quotaRes.json().mode, 'SHARED');
+
+    // MEMBER не может распоряжаться квотой.
+    const forbidden = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/quotas`,
+      headers: { cookie: memberSess.cookie, 'x-csrf-token': memberSess.csrf },
+      payload: { allocations: [{ userId: memberUser.id, bytes: 1024 }] },
+    });
+    assert.equal(forbidden.statusCode, 403);
+
+    // OWNER выделяет участнику 100 байт — этого мало для файла на 150 байт.
+    const setRes = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/quotas`,
+      headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+      payload: { allocations: [{ userId: memberUser.id, bytes: 100 }] },
+    });
+    assert.equal(setRes.statusCode, 200);
+    assert.equal(setRes.json().mode, 'ALLOCATED');
+    const ownerRow = setRes.json().members.find((m) => m.userId === ownerUser.id);
+    assert.equal(ownerRow.limit, 500 * 1024 ** 3 - 100, 'владелец получает нераспределённый остаток');
+
+    const small = buildMultipart({ projectId }, 'file', 'quota.txt', 'x'.repeat(150), 'text/plain');
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/files',
+      headers: { cookie: memberSess.cookie, 'x-csrf-token': memberSess.csrf, 'content-type': small.contentType },
+      payload: small.body,
+    });
+    assert.equal(denied.statusCode, 400);
+    assert.match(denied.json().message, /Квота, выделенная вам владельцем/);
+
+    // Увеличиваем долю до 1 МБ — загрузка проходит.
+    const widened = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/quotas`,
+      headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+      payload: { allocations: [{ userId: memberUser.id, bytes: 1024 * 1024 }] },
+    });
+    assert.equal(widened.statusCode, 200);
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/api/files',
+      headers: { cookie: memberSess.cookie, 'x-csrf-token': memberSess.csrf, 'content-type': small.contentType },
+      payload: small.body,
+    });
+    assert.equal(allowed.statusCode, 201);
+
+    // Сумма долей не может превысить купленные 500 ГБ.
+    const overflow = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/quotas`,
+      headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+      payload: { allocations: [{ userId: memberUser.id, bytes: 500 * 1024 ** 3 + 1 }] },
+    });
+    assert.equal(overflow.statusCode, 400);
+
+    // READER нельзя выделить квоту — он не участник записи, но проверим список.
+    const after = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/quota`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(after.statusCode, 200);
+    assert.ok(after.json().members.some((m) => m.userId === readerUser.id && m.limit === 0));
+  });
+
+  test('12. Подписка 30+7 дней: статусы, продление и автоудаление данных', async () => {
+    // Проектная подписка создана при покупке TEAM в тесте 11.
+    const projects = await services.repos.projects.findAll();
+    const project = projects.find((p) => p.name === 'Проект с квотами');
+    assert.ok(project);
+
+    const subRes = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/subscription`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(subRes.statusCode, 200);
+    assert.equal(subRes.json().subscription.status, 'ACTIVE');
+    assert.equal(subRes.json().plan, 'TEAM');
+    const expires = new Date(subRes.json().subscription.expiresAt).getTime();
+    assert.ok(expires > Date.now() + 29 * 24 * 3600 * 1000);
+
+    // Принудительно завершаем срок и льготный период.
+    const subId = subRes.json().subscription.id;
+    await services.repos.subscriptions.update(subId, {
+      startedAt: new Date(Date.now() - 45 * 24 * 3600 * 1000),
+      expiresAt: new Date(Date.now() - 10 * 24 * 3600 * 1000),
+      graceUntil: new Date(Date.now() - 3 * 24 * 3600 * 1000),
+    });
+    const staleStatus = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/subscription`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(staleStatus.json().subscription.status, 'EXPIRED');
+
+    const purged = await services.subscriptions.sweep();
+    assert.ok(purged.some((p) => p.projectId === project.id));
+    const filesAfter = await services.repos.files.listByProject(project.id);
+    assert.equal(filesAfter.length, 0, 'файлы проекта удалены после 30+7 дней');
+    assert.equal((await services.repos.projects.findById(project.id)).plan, 'START');
+    assert.equal((await services.repos.quotas.listByProject(project.id)).length, 0);
+
+    // Продление: тариф снова TEAM, срок 30 дней, квота снова 500 ГБ.
+    const renewed = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/subscription/renew`,
+      headers: { cookie: ownerCookie, 'x-csrf-token': ownerCsrf },
+      payload: { plan: 'TEAM' },
+    });
+    assert.equal(renewed.statusCode, 200);
+    assert.equal(renewed.json().plan, 'TEAM');
+    assert.equal(renewed.json().subscription.status, 'ACTIVE');
+    const quota = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/quota`,
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(quota.json().total, 500 * 1024 ** 3);
+
+    // Подписка аккаунта: администратор назначает TEAM, владелец продлевает на PERSONAL.
+    const readerUser = await services.repos.accounts.findByEmail('reader@skyshelf.local');
+    const setPlan = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/users/${readerUser.id}/plan`,
+      headers: { cookie: adminCookie, 'x-csrf-token': adminCsrf },
+      payload: { plan: 'PERSONAL' },
+    });
+    assert.equal(setPlan.statusCode, 200);
+
+    const accountSub = await app.inject({ method: 'GET', url: '/api/subscription', headers: { cookie: readerCookie } });
+    assert.equal(accountSub.statusCode, 200);
+    assert.equal(accountSub.json().plan, 'PERSONAL');
+    assert.equal(accountSub.json().subscription.status, 'ACTIVE');
+
+    const accountRenew = await app.inject({
+      method: 'POST',
+      url: '/api/subscription/renew',
+      headers: { cookie: readerCookie, 'x-csrf-token': readerCsrf },
+      payload: { plan: 'TEAM' },
+    });
+    assert.equal(accountRenew.statusCode, 200);
+    assert.equal(accountRenew.json().plan, 'TEAM');
+
+    // Личный файл исчезает после 30+7 дней без продления.
+    const personal = buildMultipart({}, 'file', 'personal.txt', 'personal data', 'text/plain');
+    const personalUpload = await app.inject({
+      method: 'POST',
+      url: '/api/files',
+      headers: { cookie: readerCookie, 'x-csrf-token': readerCsrf, 'content-type': personal.contentType },
+      payload: personal.body,
+    });
+    assert.equal(personalUpload.statusCode, 201);
+    assert.equal((await services.repos.files.listByOwner(readerUser.id)).length, 1);
+
+    const accSub = await services.repos.subscriptions.findByAccount(readerUser.id);
+    await services.repos.subscriptions.update(accSub.id, {
+      expiresAt: new Date(Date.now() - 9 * 24 * 3600 * 1000),
+      graceUntil: new Date(Date.now() - 2 * 24 * 3600 * 1000),
+    });
+    await services.subscriptions.sweep();
+    assert.equal((await services.repos.files.listByOwner(readerUser.id)).length, 0, 'личные файлы удалены');
+    assert.equal((await services.repos.accounts.findById(readerUser.id)).plan, 'START');
   });
 });

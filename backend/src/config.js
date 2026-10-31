@@ -36,6 +36,11 @@ class AppConfig {
     this.maxUploadBytes = 20 * 1024 * 1024;
     this.sessionTtlMs = 30 * 60 * 1000;
     this.cookiePrefix = '__Host-';
+
+    // Подписки: срок 30 дней + 7 дней льготного периода перед удалением данных.
+    this.subscriptionDays = Math.max(1, Number(env.APP_SUBSCRIPTION_DAYS || 30));
+    this.subscriptionGraceDays = Math.max(0, Number(env.APP_SUBSCRIPTION_GRACE_DAYS || 7));
+    this.subscriptionSweepIntervalMs = Math.max(1000, Number(env.APP_SUBSCRIPTION_SWEEP_MS || 10 * 60 * 1000));
   }
 
   isProduction() { return this.forceHttps || process.env.NODE_ENV === 'production'; }

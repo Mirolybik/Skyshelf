@@ -118,6 +118,21 @@ class PasswordResetToken extends Entity {
   };
 }
 
+class Subscription extends Entity {
+  static fieldMap = {
+    id: 'id', scope: 'scope', accountId: 'account_id', projectId: 'project_id',
+    plan: 'plan', startedAt: 'started_at', expiresAt: 'expires_at',
+    graceUntil: 'grace_until', renewedAt: 'renewed_at', purgedAt: 'purged_at',
+    createdAt: 'created_at',
+  };
+}
+
+class QuotaAllocation extends Entity {
+  static fieldMap = {
+    id: 'id', projectId: 'project_id', userId: 'user_id', bytes: 'bytes', updatedAt: 'updated_at',
+  };
+}
+
 const Enums = {
   FILE_EXTENSIONS: new Set(['txt', 'md', 'csv', 'pdf', 'png', 'jpg', 'jpeg', 'zip', 'docx', 'xlsx', 'pptx']),
   FOLDER_COLORS: new Set(['blue', 'violet', 'mint', 'amber', 'cyan', 'rose']),
@@ -147,5 +162,6 @@ function validateName(value, max) {
 
 module.exports = {
   Entity, Account, Folder, StoredFile, FileVersion, ShareLink, Project,
-  Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken, Enums, validateName,
+  Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken,
+  Subscription, QuotaAllocation, Enums, validateName,
 };

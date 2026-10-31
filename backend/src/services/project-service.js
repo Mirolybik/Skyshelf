@@ -6,12 +6,14 @@ const { Enums, validateName } = require('../domain/entities');
 const { BadRequestError, ForbiddenError, NotFoundError } = require('../domain/errors');
 
 class ProjectService {
-  constructor({ projects, memberships, accounts, tasks, files, submissions, crypto, audit }) {
+  constructor({ projects, memberships, accounts, tasks, files, versions, quotas, submissions, crypto, audit }) {
     this.projects = projects;
     this.memberships = memberships;
     this.accounts = accounts;
     this.tasks = tasks;
     this.files = files;
+    this.versions = versions;
+    this.quotas = quotas;
     this.submissions = submissions;
     this.crypto = crypto;
     this.audit = audit;
@@ -106,8 +108,144 @@ class ProjectService {
     }
   }
 
-  async list(userId) {
-    const memberships = await this.memberships.listByUser(userId);
+  /* ---------- Распределение квоты проекта между участниками ---------- */
+
+  static quotaOf(project) {
+    return Enums.QUOTA_BYTES[project?.plan] ?? 0n;
+  }
+
+  /** Объём файла с учётом всех версий (как в StorageService.used). */
+  async fileBytes(file) {
+    const versions = await this.versions.listByFile(file.id);
+    return versions.length
+      ? versions.reduce((sum, v) => sum + BigInt(v.size), 0n)
+      : BigInt(file.size ?? 0);
+  }
+
+  async usedByProject(projectId) {
+    const files = await this.files.listByProject(projectId);
+    let total = 0n;
+    for (const file of files) total += await this.fileBytes(file);
+    return total;
+  }
+
+  /** Сколько места в проекте занял конкретный участник (по автору загрузки). */
+  async memberUsed(projectId, userId) {
+    const files = await this.files.listByProject(projectId);
+    let total = 0n;
+    for (const file of files) {
+      if ((file.createdById ?? file.ownerId) !== userId) continue;
+      total += await this.fileBytes(file);
+    }
+    return total;
+  }
+
+  /** Сводка распределения: куплено, распределено, свободно, использование. */
+  async quotaInfo(projectId, actorId) {
+    await this.access(projectId, actorId, false);
+    const project = await this.projects.findById(projectId);
+    const total = ProjectService.quotaOf(project);
+    const allocations = await this.quotas.listByProject(projectId);
+    const explicit = new Map(allocations.map((a) => [a.userId, BigInt(a.bytes)]));
+    let allocated = 0n;
+    for (const bytes of explicit.values()) allocated += bytes;
+    const free = total > allocated ? total - allocated : 0n;
+    const mode = allocations.length ? 'ALLOCATED' : 'SHARED';
+
+    const memberships = await this.memberships.listByProject(projectId);
+    const members = [];
+    for (const m of memberships) {
+      const account = await this.accounts.findById(m.userId);
+      if (!account) continue;
+      const own = explicit.get(m.userId) ?? 0n;
+      let limit;
+      if (mode === 'SHARED') limit = total;
+      else if (explicit.has(m.userId)) limit = own;
+      else if (m.role === 'OWNER') limit = free; // владелец распоряжается остатком
+      else limit = 0n;
+      members.push({
+        membershipId: m.id,
+        userId: account.id,
+        name: account.name,
+        email: account.email,
+        role: m.role,
+        allocated: Number(own),
+        explicit: explicit.has(m.userId),
+        limit: Number(limit),
+        used: Number(await this.memberUsed(projectId, account.id)),
+      });
+    }
+
+    return {
+      plan: project.plan,
+      mode,
+      total: Number(total),
+      allocated: Number(allocated),
+      free: Number(free),
+      used: Number(await this.usedByProject(projectId)),
+      members,
+    };
+  }
+
+  /** OWNER заменяет распределение целиком; сумма не может превысить квоту тарифа. */
+  async setQuotas(projectId, actorId, allocations) {
+    await this.projects.lockById(projectId);
+    await this.owner(projectId, actorId);
+    const project = await this.projects.findById(projectId);
+    if (!project) throw new NotFoundError();
+    const total = ProjectService.quotaOf(project);
+    if (!Array.isArray(allocations)) throw new BadRequestError('Ожидается список квот участников.');
+
+    const memberships = await this.memberships.listByProject(projectId);
+    const allowed = new Set(memberships.map((m) => m.userId));
+    const seen = new Set();
+    const rows = [];
+    let sum = 0n;
+    for (const item of allocations) {
+      const userId = String(item?.userId ?? '');
+      if (!allowed.has(userId)) throw new BadRequestError('Квоту можно выделить только участнику проекта.');
+      if (seen.has(userId)) throw new BadRequestError('Участник указан в распределении дважды.');
+      const bytes = Number(item?.bytes ?? 0);
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new BadRequestError('Квота участника должна быть неотрицательным целым числом байт.');
+      seen.add(userId);
+      sum += BigInt(bytes);
+      rows.push({ userId, bytes });
+    }
+    if (sum > total) throw new BadRequestError('Сумма квот участников превышает купленный объём тарифа.');
+
+    await this.quotas.deleteByProject(projectId);
+    for (const row of rows) {
+      await this.quotas.insert({ projectId, userId: row.userId, bytes: String(row.bytes) });
+    }
+    await this.audit.record(actorId, projectId, 'QUOTA_ALLOCATED', 'PROJECT', projectId,
+      `Распределено ${rows.length} долей, сумма ${sum} Б из ${total} Б`);
+    return this.quotaInfo(projectId, actorId);
+  }
+
+  /**
+   * Лимит загрузки участника в проекте:
+   *  - нет распределения (SHARED)  → действует общая квота проекта;
+   *  - есть распределение          → персональный лимит, у OWNER — нераспределённый остаток.
+   */
+  async memberQuota(projectId, userId) {
+    const project = await this.projects.findById(projectId);
+    if (!project) throw new NotFoundError();
+    const total = ProjectService.quotaOf(project);
+    const allocations = await this.quotas.listByProject(projectId);
+    if (!allocations.length) return { mode: 'SHARED', limit: total, used: await this.memberUsed(projectId, userId) };
+    const membership = await this.memberships.find(projectId, userId);
+    if (!membership) throw new NotFoundError();
+    const own = allocations.find((a) => a.userId === userId);
+    let limit;
+    if (own) limit = BigInt(own.bytes);
+    else if (membership.role === 'OWNER') {
+      const sum = allocations.reduce((acc, a) => acc + BigInt(a.bytes), 0n);
+      limit = total > sum ? total - sum : 0n;
+    } else limit = 0n;
+    return { mode: 'ALLOCATED', limit, used: await this.memberUsed(projectId, userId) };
+  }
+
+  async list(userId) {    const memberships = await this.memberships.listByUser(userId);
     const out = [];
     for (const m of memberships) {
       const project = await this.projects.findById(m.projectId);
