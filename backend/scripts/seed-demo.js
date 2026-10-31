@@ -6,7 +6,7 @@ const { Database } = require('../src/db/database');
 const { MigrationRunner } = require('../src/db/migrate');
 const { CryptoService } = require('../src/services/crypto-service');
 const { Repositories } = require('../src/repositories');
-const { Account, Project, Membership, ProjectTask } = require('../src/domain/entities');
+const { Account, Project, Membership, ProjectTask, Subscription, QuotaAllocation, Enums } = require('../src/domain/entities');
 
 const DEMO_PASSWORD = 'SkyShelfDemo2026!';
 
@@ -28,6 +28,23 @@ async function main() {
 
   const created = [];
   const accounts = [];
+  const ensureSubscription = async (scope, targetId, plan) => {
+    if (!['PERSONAL', 'TEAM'].includes(plan)) return;
+    const finder = scope === 'ACCOUNT'
+      ? () => repos.subscriptions.findByAccount(targetId)
+      : () => repos.subscriptions.findByProject(targetId);
+    if (await finder()) return;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const graceUntil = new Date(expiresAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    await repos.subscriptions.insert(new Subscription({
+      scope,
+      accountId: scope === 'ACCOUNT' ? targetId : null,
+      projectId: scope === 'PROJECT' ? targetId : null,
+      plan, startedAt: now, expiresAt, graceUntil,
+    }));
+    created.push(`subscription ${scope} ${plan}`);
+  };
   for (const spec of ACCOUNTS) {
     let account = await repos.accounts.findByEmail(spec.email);
     if (!account) {
@@ -44,6 +61,8 @@ async function main() {
     }
     accounts.push(account);
   }
+
+  for (const account of accounts) await ensureSubscription('ACCOUNT', account.id, account.plan);
 
   const [owner, member, reader] = accounts;
   let project = await repos.projects.findWhere('owner_id = $1 AND name = $2', [owner.id, 'Веб-сервис «SkyShelf»']);
@@ -66,6 +85,16 @@ async function main() {
     await repos.memberships.insert(new Membership({ projectId: project.id, userId: reader.id, role: 'READER' }));
     created.push('memberships OWNER/MEMBER/READER');
 
+    const total = Enums.QUOTA_BYTES.TEAM;
+    const shares = [
+      { userId: member.id, bytes: (100n * 1024n ** 3n).toString() },
+      { userId: reader.id, bytes: (10n * 1024n ** 3n).toString() },
+    ];
+    for (const share of shares) {
+      await repos.quotas.insert(new QuotaAllocation({ projectId: project.id, userId: share.userId, bytes: share.bytes }));
+    }
+    created.push(`quota allocations (member 100 ГБ, reader 10 ГБ из ${Number(total / 1024n ** 3n)} ГБ)`);
+
     const checklist = [
       ['Спроектировать схему данных', true],
       ['Реализовать аутентификацию и сессии', true],
@@ -83,6 +112,21 @@ async function main() {
     if (!ownerMember) {
       await repos.memberships.insert(new Membership({ projectId: project.id, userId: owner.id, role: 'OWNER' }));
     }
+  }
+
+  await ensureSubscription('PROJECT', project.id, project.plan);
+
+  // Демонстрационное распределение купленной квоты TEAM между участниками.
+  const existingAllocations = await repos.quotas.listByProject(project.id);
+  if (!existingAllocations.length && project.plan === 'TEAM') {
+    for (const [account, gb] of [[member, 100n], [reader, 10n]]) {
+      if (await repos.memberships.find(project.id, account.id)) {
+        await repos.quotas.insert(new QuotaAllocation({
+          projectId: project.id, userId: account.id, bytes: (gb * 1024n ** 3n).toString(),
+        }));
+      }
+    }
+    created.push('quota allocations');
   }
 
   console.log(created.length ? `seed: добавлено — ${created.join(', ')}` : 'seed: демо-данные уже в базе');

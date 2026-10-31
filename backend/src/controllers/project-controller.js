@@ -16,6 +16,10 @@ class ProjectController extends Controller {
       ['POST', '/api/projects/:id/members', this.addMember],
       ['PATCH', '/api/projects/:id/members/:membershipId', this.changeMemberRole],
       ['DELETE', '/api/projects/:id/members/:membershipId', this.removeMember],
+      ['GET', '/api/projects/:id/quota', this.projectQuota],
+      ['PUT', '/api/projects/:id/quotas', this.updateProjectQuotas],
+      ['GET', '/api/projects/:id/subscription', this.projectSubscription],
+      ['POST', '/api/projects/:id/subscription/renew', this.renewProjectSubscription],
       ['GET', '/api/projects/:id/tasks', this.listTasks],
       ['POST', '/api/projects/:id/tasks', this.createTask],
       ['PATCH', '/api/projects/:id/tasks/:taskId', this.updateTask],
@@ -113,6 +117,34 @@ class ProjectController extends Controller {
       this.services.projects.change(request.params.id, user.id, request.params.membershipId, null, true)
     );
     return { ok: true };
+  }
+
+  async projectQuota(request) {
+    const user = await this.services.auth.current(request.session);
+    return this.services.projects.quotaInfo(request.params.id, user.id);
+  }
+
+  async updateProjectQuotas(request) {
+    const user = await this.services.auth.current(request.session);
+    const allocations = request.body?.allocations ?? [];
+    return this.services.db.transaction(() =>
+      this.services.projects.setQuotas(request.params.id, user.id, allocations)
+    );
+  }
+
+  async projectSubscription(request) {
+    const user = await this.services.auth.current(request.session);
+    await this.services.projects.access(request.params.id, user.id, false);
+    return this.services.subscriptions.projectInfo(request.params.id);
+  }
+
+  async renewProjectSubscription(request) {
+    const user = await this.services.auth.current(request.session);
+    const current = await this.services.repos.projects.findById(request.params.id);
+    const plan = request.body?.plan ?? current?.plan ?? 'TEAM';
+    return this.services.db.transaction(() =>
+      this.services.subscriptions.renewProject(request.params.id, plan, user.id)
+    );
   }
 
   async listTasks(request) {

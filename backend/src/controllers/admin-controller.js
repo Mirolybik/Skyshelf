@@ -49,6 +49,7 @@ class AdminController extends Controller {
     const target = await this.services.repos.accounts.findById(request.params.id);
     if (!target) throw new NotFoundError();
     await this.services.repos.accounts.update(target.id, { plan });
+    await this.services.subscriptions.ensureAccount(target.id, plan, { actorId: admin.id });
     await this.services.audit.record(admin.id, null, 'PLAN_CHANGED', 'ACCOUNT', target.id, `${target.email} → ${plan}`);
     const updated = await this.services.repos.accounts.findById(target.id);
     return updated.view();
@@ -95,6 +96,7 @@ class AdminController extends Controller {
     const project = await this.services.repos.projects.findById(request.params.id);
     if (!project) throw new NotFoundError();
     await this.services.repos.projects.update(project.id, { plan });
+    await this.services.subscriptions.ensureProject(project.id, plan, { actorId: admin.id });
     await this.services.audit.record(admin.id, project.id, 'PLAN_CHANGED', 'PROJECT', project.id, `${project.name} → ${plan}`);
     const updated = await this.services.repos.projects.findById(project.id);
     return { id: updated.id, name: updated.name, plan: updated.plan };

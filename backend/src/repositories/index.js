@@ -5,6 +5,7 @@ const { Repository } = require('./repository');
 const {
   Account, Folder, StoredFile, FileVersion, ShareLink, Project,
   Membership, ProjectTask, SubmissionLink, AuditEvent, PasswordResetToken,
+  Subscription, QuotaAllocation,
 } = require('../domain/entities');
 
 class Accounts extends Repository {
@@ -22,6 +23,8 @@ class Folders extends Repository {
       ? this.findWhere('owner_id = $1 AND project_id IS NULL', [ownerId], 'name ASC')
       : this.findWhere('project_id = $1', [projectId], 'name ASC');
   }
+  listByProject(projectId) { return this.findWhere('project_id = $1', [projectId]); }
+  deleteByProject(projectId) { return this.deleteWhere('project_id = $1', [projectId]); }
   existsByNameInSpace(ownerId, projectId, name) {
     return projectId == null
       ? this.exists('owner_id = $1 AND project_id IS NULL AND lower(name) = lower($2)', [ownerId, name])
@@ -143,6 +146,22 @@ class PasswordResets extends Repository {
   deleteByUser(userId) { return this.deleteWhere('user_id = $1', [userId]); }
 }
 
+class Subscriptions extends Repository {
+  constructor(db) { super(db, { table: 'subscriptions', Entity: Subscription }); }
+  findByAccount(accountId) { return this.findWhere("scope = 'ACCOUNT' AND account_id = $1", [accountId]).then((r) => r[0] ?? null); }
+  findByProject(projectId) { return this.findWhere("scope = 'PROJECT' AND project_id = $1", [projectId]).then((r) => r[0] ?? null); }
+  listDue(now = new Date()) {
+    return this.findWhere('purged_at IS NULL AND grace_until <= $1', [now], 'grace_until ASC');
+  }
+}
+
+class Quotas extends Repository {
+  constructor(db) { super(db, { table: 'quota_allocations', Entity: QuotaAllocation }); }
+  listByProject(projectId) { return this.findWhere('project_id = $1', [projectId], 'updated_at ASC'); }
+  find(projectId, userId) { return this.findWhere('project_id = $1 AND user_id = $2', [projectId, userId]).then((r) => r[0] ?? null); }
+  deleteByProject(projectId) { return this.deleteWhere('project_id = $1', [projectId]); }
+}
+
 class Repositories {
   constructor(db) {
     this.accounts = new Accounts(db);
@@ -156,11 +175,13 @@ class Repositories {
     this.submissions = new Submissions(db);
     this.audits = new Audits(db);
     this.passwordResets = new PasswordResets(db);
+    this.subscriptions = new Subscriptions(db);
+    this.quotas = new Quotas(db);
     this.db = db;
   }
 }
 
 module.exports = {
   Accounts, Folders, Files, Versions, Shares, Projects, Memberships,
-  Tasks, Submissions, Audits, PasswordResets, Repositories,
+  Tasks, Submissions, Audits, PasswordResets, Subscriptions, Quotas, Repositories,
 };

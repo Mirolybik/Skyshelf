@@ -17,6 +17,8 @@ const state = {
   filter: "all",
   uploading: false,
   projectDetail: null,
+  projectQuota: null,
+  projectSubscription: null,
   tasks: [],
   members: [],
   activity: [],
@@ -96,6 +98,29 @@ const prettySize = (b) =>
 const prettyDate = (iso) =>
   iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) : "—";
 const prettyFullDate = (iso) => iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "Не указано";
+const subStatuses = {
+  ACTIVE: { label: "Активна", cls: "active" },
+  GRACE: { label: "Льготный период", cls: "" },
+  EXPIRED: { label: "Истекла", cls: "danger" },
+  NONE: { label: "Нет подписки", cls: "" },
+};
+const subBadge = (sub) => {
+  const s = subStatuses[sub?.status] || subStatuses.NONE;
+  return `<span class="badge ${s.cls}">${s.label}</span>`;
+};
+const subHint = (sub) => {
+  if (!sub) return "Подписка не оформлена";
+  if (sub.status === "ACTIVE") return `Активна до ${prettyFullDate(sub.expiresAt)} · осталось ${sub.daysLeft} дн.`;
+  if (sub.status === "GRACE") return `Срок истёк. Данные будут удалены через ${sub.graceDaysLeft} дн. (до ${prettyFullDate(sub.graceUntil)})`;
+  if (sub.status === "EXPIRED") return "Льготный период завершён — данные удалены";
+  return "Оформите подписку на 30 дней";
+};
+const GB = 1024 ** 3;
+const gbValue = (bytes) => (Number(bytes || 0) / GB);
+const gbLabel = (bytes) => {
+  const gb = gbValue(bytes);
+  return `${gb >= 10 ? gb.toFixed(0) : gb.toFixed(2).replace(/\.?0+$/, "")} ГБ`;
+};
 const project = () => state.projects.find((p) => p.id === state.projectId);
 const writable = () => !state.projectId || project()?.role !== "READER";
 const owner = () => !state.projectId || project()?.role === "OWNER";
@@ -324,24 +349,26 @@ function projectsPage() {
 }
 
 async function projectPage(){
-  const [detail,tasks,members]=await Promise.all([api(`/projects/${state.projectId}`),api(`/projects/${state.projectId}/tasks`),api(`/projects/${state.projectId}/members`)]);state.projectDetail=detail;state.tasks=tasks;state.members=members;
+  const [detail,tasks,members,quota,subscription]=await Promise.all([api(`/projects/${state.projectId}`),api(`/projects/${state.projectId}/tasks`),api(`/projects/${state.projectId}/members`),api(`/projects/${state.projectId}/quota`),api(`/projects/${state.projectId}/subscription`)]);state.projectDetail=detail;state.tasks=tasks;state.members=members;state.projectQuota=quota;state.projectSubscription=subscription;
   const p=detail,canWrite=p.role!=="READER",isOwner=p.role==="OWNER",progress=p.tasks?Math.round((p.completedTasks/p.tasks)*100):0,finalFile=state.files.find(f=>f.id===p.finalFileId),activeFiles=state.files.filter(f=>!f.trashed);
   const folderCards=state.folders.map(f=>`<article class="folder-card"><div class="folder-top"><span class="${esc(f.color)}">${icon("folder")}</span>${canWrite?ib("Настройки папки","folder-edit",f.id,"more"):""}</div><button class="folder-name" data-action="open-folder" data-id="${f.id}">${esc(f.name)}</button><small>${activeFiles.filter(x=>x.folderId===f.id).length} файлов</small></article>`).join("");
   shell(`<div class="breadcrumb"><a href="#projects">Учебные проекты</a><span>/</span><span>${esc(p.name)}</span></div>
-  <section class="project-hero cover-${esc(p.cover)} accent-${esc(p.accent)}"><div class="project-hero-grid"></div><div class="project-orb large"></div><div class="project-hero-copy"><div class="row project-tags"><span class="badge">${projectStatuses[p.status]}</span><span class="badge">${roles[p.role]}</span></div><p class="project-course">${esc(p.course||"Учебный проект")}</p><h1>${esc(p.name)}</h1><p>${esc(p.description||"Общее пространство для материалов и результата команды.")}</p><div class="project-meta"><span>${icon("calendar")}<b>${p.deadline?prettyDate(p.deadline):"Без дедлайна"}</b><small>Дедлайн</small></span><span>${icon("book")}<b>${esc(p.teacher||"Не указан")}</b><small>Преподаватель</small></span><span>${icon("team")}<b>${p.members} / ${p.memberLimit}</b><small>Команда</small></span></div></div><div class="project-hero-actions">${isOwner?btn("Оформление","project-edit","glass","palette"):""}<a class="btn glass" href="/api/projects/${p.id}/export">${icon("package")} Экспорт ZIP</a>${btn("Участники","members","glass","team")}</div></section>
+  <section class="project-hero cover-${esc(p.cover)} accent-${esc(p.accent)}"><div class="project-hero-grid"></div><div class="project-orb large"></div><div class="project-hero-copy"><div class="row project-tags"><span class="badge">${projectStatuses[p.status]}</span><span class="badge">${roles[p.role]}</span></div><p class="project-course">${esc(p.course||"Учебный проект")}</p><h1>${esc(p.name)}</h1><p>${esc(p.description||"Общее пространство для материалов и результата команды.")}</p><div class="project-meta"><span>${icon("calendar")}<b>${p.deadline?prettyDate(p.deadline):"Без дедлайна"}</b><small>Дедлайн</small></span><span>${icon("book")}<b>${esc(p.teacher||"Не указан")}</b><small>Преподаватель</small></span><span>${icon("team")}<b>${p.members} / ${p.memberLimit}</b><small>Команда</small></span></div></div><div class="project-hero-actions">${isOwner?btn("Оформление","project-edit","glass","palette"):""}<a class="btn glass" href="/api/projects/${p.id}/export">${icon("package")} Экспорт ZIP</a>${btn("Участники","members","glass","team")}${btn("Квоты","quotas","glass","cloud")}</div></section>
   ${!canWrite?`<div class="notice">${icon("lock")} Режим читателя: вы можете смотреть задачи, версии и скачивать материалы.</div>`:""}
   <div class="project-dashboard"><section class="panel checklist-panel"><div class="panel-head"><div><div class="page-kicker">Чек‑лист сдачи</div><h2>${p.completedTasks} из ${p.tasks} готово</h2></div><div class="radial-progress" style="--value:${progress}"><span>${progress}%</span></div></div><div class="project-progress wide"><div><i style="width:${progress}%"></i></div></div><div class="task-list">${tasks.map(t=>`<div class="task-row ${t.completed?"completed":""}"><button class="task-check" data-action="task-toggle" data-id="${t.id}" data-completed="${!t.completed}" ${!canWrite?"disabled":""}>${t.completed?icon("check"):""}</button><div><strong>${esc(t.title)}</strong><small>${t.assignee?`Исполнитель: ${esc(t.assignee)}`:"Без исполнителя"}${t.dueAt?` · до ${prettyDate(t.dueAt)}`:""}</small></div>${canWrite?ib("Удалить задачу","task-delete",t.id,"close"):""}</div>`).join("")}</div>${canWrite?`<form class="quick-task" id="task-form"><input name="title" required maxlength="180" placeholder="Добавить шаг перед сдачей"><button class="icon-btn" aria-label="Добавить">${icon("plus")}</button></form>`:""}</section>
   <aside class="project-side"><section class="panel submission-panel"><span class="panel-icon">${icon("flag")}</span><div class="page-kicker">Итог проекта</div><h2>${finalFile?esc(finalFile.name):"Файл не выбран"}</h2><p>${finalFile?`Версия ${finalFile.versionCount} · ${prettySize(finalFile.size)}`:"Выберите готовый файл в таблице ниже — он попадёт в карточку для преподавателя."}</p>${finalFile?`<div class="final-integrity">${icon("shield")} SHA‑256 · ${esc(finalFile.checksum?.slice(0,14)||"—")}</div>`:""}${isOwner?btn(finalFile?"Ссылка преподавателю":"Сначала выберите файл","submission",finalFile?"primary":"ghost","link"):""}</section>
-  <section class="panel team-compact"><div class="row between"><div><div class="page-kicker">Команда</div><h2>${members.length} участника</h2></div><button class="icon-btn" data-action="members">${icon("arrow")}</button></div><div class="avatar-stack">${members.map(m=>`<span class="avatar" title="${esc(m.name)} · ${roles[m.role]}">${esc(m.initials)}</span>`).join("")}</div><p>${members.map(m=>esc(m.name.split(" ")[0])).join(" · ")}</p></section></aside></div>
+  <section class="panel team-compact"><div class="row between"><div><div class="page-kicker">Команда</div><h2>${members.length} участника</h2></div><button class="icon-btn" data-action="members">${icon("arrow")}</button></div><div class="avatar-stack">${members.map(m=>`<span class="avatar" title="${esc(m.name)} · ${roles[m.role]}">${esc(m.initials)}</span>`).join("")}</div><p>${members.map(m=>esc(m.name.split(" ")[0])).join(" · ")}</p></section>
+  <section class="panel quota-panel"><div class="row between"><div><div class="page-kicker">Квота команды</div><h2>${esc(plans[p.plan]||p.plan)} · ${gbLabel(state.projectQuota?.total||0)}</h2></div>${subBadge(subscription?.subscription)}</div><p>${state.projectQuota?.mode==="ALLOCATED"?`Распределено ${gbLabel(state.projectQuota.allocated)}, свободно ${gbLabel(state.projectQuota.free)}.`:`Пока общая квота: ${gbLabel(state.projectQuota?.total||0)} на всех участников.`}</p><div class="progress"><span style="width:${Math.min(100,((state.projectQuota?.used||0)/(state.projectQuota?.total||1))*100)}%"></span></div><small class="muted">${prettySize(state.projectQuota?.used||0)} использовано · ${subHint(subscription?.subscription)}</small>${isOwner?`<div class="row" style="margin-top:12px">${btn("Распределить","quotas","small ghost","team")}${subscription?.subscription?btn("Продлить","quotas","small primary","clock"):""}</div>`:""}</section></aside></div>
   <div class="section-heading project-files-heading"><div><div class="page-kicker">Материалы</div><h2>Файлы проекта <span id="file-count" class="muted"></span></h2></div><div class="row">${canWrite?btn("Новая папка","folder-new","small ghost","plus")+btn("Загрузить","upload","small primary","upload"):""}</div></div>
   ${state.folderId?`<div class="breadcrumb folder-crumb"><button data-action="folder-back">Все папки</button><span>/</span><span>${esc(state.folders.find(f=>f.id===state.folderId)?.name||"")}</span></div>`:`<div class="folder-grid compact-folders">${folderCards||'<p class="muted">Создайте папку для структуры проекта.</p>'}</div>`}
   <div class="filter-row project-filters"><button class="chip ${state.filter==="all"?"selected":""}" data-action="filter" data-filter="all">Все</button><button class="chip ${state.filter==="docs"?"selected":""}" data-action="filter" data-filter="docs">Документы</button><button class="chip ${state.filter==="images"?"selected":""}" data-action="filter" data-filter="images">Изображения</button><button class="chip ${state.projectTrash?"selected":""}" data-action="project-trash">${icon("trash")} Корзина</button></div><div id="file-list"></div>${canWrite&&!state.projectTrash?`<div class="drop-zone" tabindex="0" role="button" data-action="upload">${icon("upload")}<span><strong>Перетащите материалы проекта</strong> или выберите на компьютере</span></div><div id="upload-status" class="upload-status"></div>`:""}`);
   renderFiles();setupDrop();
   if($("#task-form"))$("#task-form").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,button=$("button",form);button.disabled=true;try{await api(`/projects/${p.id}/tasks`,{method:"POST",body:{title:form.title.value}});await projectPage();toast("Задача добавлена");}catch(error){toast(error.message,true);button.disabled=false;}};
 }
-function settingsPage() {
+async function settingsPage() {
+  const sub = await api("/subscription").catch(() => null);
   shell(
-    `<div class="page-heading"><div><div class="page-kicker">Персонализация</div><h1>Настройки</h1><p>Профиль, оформление и сведения о пространстве.</p></div><a class="btn ghost" href="#security">${icon("shield")} Безопасность аккаунта</a></div><div class="settings-grid"><section class="panel profile-panel"><div class="settings-avatar">${esc(state.user.name.slice(0,2).toUpperCase())}<span></span></div><h2>Профиль и внешний вид</h2><form id="settings-form"><label>Имя<input name="name" required maxlength="80" value="${esc(state.user.name)}"></label><label>Email<input value="${esc(state.user.email)}" disabled></label><div class="form-cols"><label>Тема<select name="theme"><option value="dark">Тёмная</option><option value="light">Светлая</option></select></label><label>Акцент<select name="accent"><option value="blue">Небесный</option><option value="violet">Фиолетовый</option><option value="mint">Мятный</option></select></label></div><p class="form-error" role="alert"></p><button class="btn primary" type="submit">Сохранить настройки</button></form></section><section class="panel storage-panel"><div class="row between"><div><div class="page-kicker">Тариф</div><h2>${plans[state.usage.plan]}</h2></div><span class="storage-ring">${Math.round((state.usage.used/state.usage.quota)*100)||0}%</span></div><div class="plan-number">${prettySize(state.usage.quota)}</div><p>Доступный объём личного пространства. Все версии файлов учитываются в квоте.</p><div class="progress"><span style="width:${Math.min(100, (state.usage.used / state.usage.quota) * 100)}%"></span></div><div class="storage-facts"><span>${icon("lock")} AES‑256‑GCM<br><small>Шифрование объектов</small></span><span>${icon("versions")} ${state.files.reduce((n,f)=>n+(f.versionCount||1),0)} версий<br><small>С учётом истории</small></span></div><div class="notice">Учебная версия не принимает реальные платежи. Тариф назначает администратор.</div></section></div>`,
+    `<div class="page-heading"><div><div class="page-kicker">Персонализация</div><h1>Настройки</h1><p>Профиль, оформление и сведения о пространстве.</p></div><a class="btn ghost" href="#security">${icon("shield")} Безопасность аккаунта</a></div><div class="settings-grid"><section class="panel profile-panel"><div class="settings-avatar">${esc(state.user.name.slice(0,2).toUpperCase())}<span></span></div><h2>Профиль и внешний вид</h2><form id="settings-form"><label>Имя<input name="name" required maxlength="80" value="${esc(state.user.name)}"></label><label>Email<input value="${esc(state.user.email)}" disabled></label><div class="form-cols"><label>Тема<select name="theme"><option value="dark">Тёмная</option><option value="light">Светлая</option></select></label><label>Акцент<select name="accent"><option value="blue">Небесный</option><option value="violet">Фиолетовый</option><option value="mint">Мятный</option></select></label></div><p class="form-error" role="alert"></p><button class="btn primary" type="submit">Сохранить настройки</button></form></section><section class="panel storage-panel"><div class="row between"><div><div class="page-kicker">Тариф</div><h2>${plans[state.usage.plan]}</h2></div><span class="storage-ring">${Math.round((state.usage.used/state.usage.quota)*100)||0}%</span></div><div class="plan-number">${prettySize(state.usage.quota)}</div><p>Доступный объём личного пространства. Все версии файлов учитываются в квоте.</p><div class="progress"><span style="width:${Math.min(100, (state.usage.used / state.usage.quota) * 100)}%"></span></div><div class="storage-facts"><span>${icon("lock")} AES‑256‑GCM<br><small>Шифрование объектов</small></span><span>${icon("versions")} ${state.files.reduce((n,f)=>n+(f.versionCount||1),0)} версий<br><small>С учётом истории</small></span></div><div class="notice">Учебная версия не принимает реальные платежи. Тариф назначает администратор.</div></section><section class="panel subscription-panel"><div class="row between"><div><div class="page-kicker">Подписка</div><h2>${esc(plans[sub?.plan] || "Старт")}</h2></div>${subBadge(sub?.subscription)}</div><p>${subHint(sub?.subscription)}</p><div class="notice">${icon("clock")} Срок подписки — ${sub?.termDays || 30} дней. После окончания есть ${sub?.graceDays || 7} дней, чтобы продлить тариф, иначе данные личного пространства будут удалены.</div>${sub ? `<form id="account-sub-form"><label>Тариф<select name="plan"><option value="TEAM" ${sub.plan === "TEAM" ? "selected" : ""}>Команда · 500 ГБ</option><option value="PERSONAL" ${sub.plan === "PERSONAL" ? "selected" : ""}>Личный · 100 ГБ</option></select></label><p class="form-error"></p><button class="btn primary" type="submit">${icon("clock")} ${sub.subscription ? "Продлить на 30 дней" : "Оформить на 30 дней"}</button></form>` : ""}</section></div>`,
   );
   const f = $("#settings-form");
   f.theme.value = state.user.theme;
@@ -363,9 +390,23 @@ function settingsPage() {
       if ($("button", f)) $("button", f).disabled = false;
     }
   };
+  const subForm = $("#account-sub-form");
+  if (subForm) subForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const button = $("button", subForm);
+    button.disabled = true;
+    try {
+      const data = await api("/subscription/renew", { method: "POST", body: { plan: subForm.plan.value } });
+      toast(`Подписка ${plans[data.plan]} активна до ${prettyDate(data.subscription.expiresAt)}`);
+      await settingsPage();
+    } catch (error) {
+      $(".form-error", subForm).textContent = error.message;
+      button.disabled = false;
+    }
+  };
 }
 
-const activityLabels={ACCOUNT_REGISTERED:"Создан аккаунт",LOGIN_SUCCEEDED:"Вход в аккаунт",PROFILE_UPDATED:"Обновлён профиль",FILE_UPLOADED:"Загружен файл",FILE_VERSION_ADDED:"Добавлена версия",FILE_TRASHED:"Файл перемещён в корзину",FILE_RESTORED:"Файл восстановлен",FILE_PURGED:"Файл удалён навсегда",FOLDER_CREATED:"Создана папка",FOLDER_DELETED:"Удалена папка",SHARE_CREATED:"Создана ссылка",SHARE_REVOKED:"Ссылка отозвана",PROJECT_CREATED:"Создан проект",PROJECT_UPDATED:"Обновлён проект",MEMBER_ADDED:"Добавлен участник",MEMBER_REMOVED:"Удалён участник",MEMBER_ROLE_CHANGED:"Изменена роль",TASK_CREATED:"Добавлена задача",TASK_COMPLETED:"Задача выполнена",TASK_UPDATED:"Обновлена задача",TASK_DELETED:"Удалена задача",FINAL_FILE_SELECTED:"Выбран итоговый файл",SUBMISSION_LINK_CREATED:"Создана ссылка преподавателю",SUBMISSION_LINK_REVOKED:"Ссылка преподавателю отозвана",TWO_FACTOR_SETUP_STARTED:"Начата настройка 2FA",TWO_FACTOR_ENABLED:"Включена 2FA",TWO_FACTOR_DISABLED:"Отключена 2FA",PASSWORD_CHANGED:"Изменён пароль",PLAN_CHANGED:"Изменён тариф"};
+const activityLabels={ACCOUNT_REGISTERED:"Создан аккаунт",LOGIN_SUCCEEDED:"Вход в аккаунт",PROFILE_UPDATED:"Обновлён профиль",FILE_UPLOADED:"Загружен файл",FILE_VERSION_ADDED:"Добавлена версия",FILE_TRASHED:"Файл перемещён в корзину",FILE_RESTORED:"Файл восстановлен",FILE_PURGED:"Файл удалён навсегда",FOLDER_CREATED:"Создана папка",FOLDER_DELETED:"Удалена папка",SHARE_CREATED:"Создана ссылка",SHARE_REVOKED:"Ссылка отозвана",PROJECT_CREATED:"Создан проект",PROJECT_UPDATED:"Обновлён проект",MEMBER_ADDED:"Добавлен участник",MEMBER_REMOVED:"Удалён участник",MEMBER_ROLE_CHANGED:"Изменена роль",TASK_CREATED:"Добавлена задача",TASK_COMPLETED:"Задача выполнена",TASK_UPDATED:"Обновлена задача",TASK_DELETED:"Удалена задача",FINAL_FILE_SELECTED:"Выбран итоговый файл",SUBMISSION_LINK_CREATED:"Создана ссылка преподавателю",SUBMISSION_LINK_REVOKED:"Ссылка преподавателю отозвана",TWO_FACTOR_SETUP_STARTED:"Начата настройка 2FA",TWO_FACTOR_ENABLED:"Включена 2FA",TWO_FACTOR_DISABLED:"Отключена 2FA",PASSWORD_CHANGED:"Изменён пароль",PLAN_CHANGED:"Изменён тариф",QUOTA_ALLOCATED:"Распределена квота",SUBSCRIPTION_RENEWED:"Продлена подписка",SUBSCRIPTION_EXPIRED:"Подписка истекла",DATA_PURGED:"Данные удалены после подписки"};
 
 async function activityPage(){
   const events=await api("/activity?limit=100");state.activity=events;
@@ -568,8 +609,105 @@ async function membersDialog() {
       }),
   );
 }
-function confirmModal(title, text, callback) {
+async function projectQuotasDialog() {
+  const projectId = state.projectId;
+  const [quota, subscription] = await Promise.all([
+    api(`/projects/${projectId}/quota`),
+    api(`/projects/${projectId}/subscription`),
+  ]);
+  const can = state.projectDetail?.role === "OWNER";
+  const totalGb = gbValue(quota.total);
+  const activePlan = ["PERSONAL", "TEAM"].includes(quota.plan) ? quota.plan : "TEAM";
+  const memberRows = quota.members
+    .map((m) => {
+      const value = m.explicit ? gbValue(m.allocated).toFixed(2).replace(/\.?0+$/, "") : "";
+      return `<div class="quota-row"><div class="member-name"><strong>${esc(m.name)} ${m.role === "OWNER" ? '<span class="badge">владелец</span>' : ""}</strong><small>${esc(m.email)} · ${roles[m.role]} · занято ${gbLabel(m.used)}</small></div>${
+        can
+          ? `<input type="number" min="0" max="${totalGb}" step="0.1" value="${esc(value)}" placeholder="${m.role === "OWNER" ? "остаток" : "0"}" data-quota-user="${m.userId}" aria-label="Квота ${esc(m.name)} в гигабайтах"><span class="quota-unit">ГБ</span>`
+          : `<span class="badge">${gbLabel(m.limit)}</span>`
+      }</div>`;
+    })
+    .join("");
+
   openModal(
+    "Квоты и подписка",
+    `<p class="dialog-description">Тариф <b>${esc(plans[quota.plan] || quota.plan)}</b>: ${gbLabel(quota.total)}. ${
+      quota.mode === "ALLOCATED"
+        ? `Распределено ${gbLabel(quota.allocated)}, свободно ${gbLabel(quota.free)}.`
+        : "Сейчас квота общая — задайте доли, чтобы у каждого участника был свой лимит."
+    }</p>
+    <div class="stats admin-stats quota-stats"><div class="stat"><p>Куплено</p><strong>${gbLabel(quota.total)}</strong></div><div class="stat"><p>Распределено</p><strong>${gbLabel(quota.allocated)}</strong></div><div class="stat"><p>Свободно</p><strong>${gbLabel(quota.free)}</strong></div><div class="stat"><p>Занято</p><strong>${prettySize(quota.used)}</strong></div></div>
+    <div class="notice quota-sub-notice">${subBadge(subscription.subscription)} ${subHint(subscription.subscription)}<br><small>Подписка действует ${subscription.termDays} дн., затем ${subscription.graceDays} дн. на продление. После этого данные пространства удаляются.</small></div>
+    ${
+      can
+        ? `<form id="project-sub-form" class="dialog-form quota-sub-form"><div class="page-kicker">Подписка проекта</div><label>Тариф<select name="plan"><option value="TEAM" ${activePlan === "TEAM" ? "selected" : ""}>Команда · 500 ГБ</option><option value="PERSONAL" ${activePlan === "PERSONAL" ? "selected" : ""}>Личный · 100 ГБ</option></select></label><button class="btn primary small" type="submit">${icon("clock")} ${subscription.subscription ? "Продлить на 30 дней" : "Оформить на 30 дней"}</button><p class="form-error" role="alert"></p></form>`
+        : ""
+    }
+    ${
+      can
+        ? `<form id="quota-form" class="dialog-form quota-form"><div class="page-kicker">Распределение квоты</div><p class="muted">Укажите лимиты в гигабайтах. Пустое поле — доля не выделена. Владелец без явного лимита получает весь нераспределённый остаток.</p>${memberRows}<p class="form-error" role="alert"></p><button class="btn primary" type="submit">Сохранить распределение</button></form>`
+        : `<div class="member-list">${memberRows}</div>`
+    }`,
+  );
+
+  if (can) {
+    const subForm = $("#project-sub-form");
+    subForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const button = $("button", subForm);
+      button.disabled = true;
+      try {
+        const data = await api(`/projects/${projectId}/subscription/renew`, {
+          method: "POST",
+          body: { plan: subForm.plan.value },
+        });
+        toast(`Подписка ${plans[data.plan]} активна до ${prettyDate(data.subscription.expiresAt)}`);
+        await projectPage();
+        await projectQuotasDialog();
+      } catch (error) {
+        $(".form-error", subForm).textContent = error.message;
+        button.disabled = false;
+      }
+    };
+
+    const form = $("#quota-form");
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const button = $("button[type=submit]", form);
+      const inputs = [...form.querySelectorAll("[data-quota-user]")];
+      const allocations = [];
+      let sum = 0;
+      for (const input of inputs) {
+        const raw = input.value.trim().replace(",", ".");
+        if (raw === "") continue;
+        const gb = Number(raw);
+        if (!Number.isFinite(gb) || gb < 0) {
+          $(".form-error", form).textContent = "Укажите неотрицательное число гигабайт.";
+          return;
+        }
+        const bytes = Math.round(gb * GB);
+        sum += bytes;
+        allocations.push({ userId: input.dataset.quotaUser, bytes });
+      }
+      if (sum > quota.total) {
+        $(".form-error", form).textContent = `Сумма долей ${gbLabel(sum)} больше купленных ${gbLabel(quota.total)}.`;
+        return;
+      }
+      button.disabled = true;
+      try {
+        await api(`/projects/${projectId}/quotas`, { method: "PUT", body: { allocations } });
+        toast("Распределение квоты сохранено");
+        await projectPage();
+        await projectQuotasDialog();
+      } catch (error) {
+        $(".form-error", form).textContent = error.message;
+        button.disabled = false;
+      }
+    };
+  }
+}
+
+function confirmModal(title, text, callback) {  openModal(
     title,
     `<p class="dialog-description">${text}</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn ghost" data-action="modal-close">Отмена</button><button class="btn danger" id="confirm-action">Подтвердить</button></div>`,
   );
@@ -801,6 +939,9 @@ document.addEventListener("click", async (event) => {
       case "members":
         await membersDialog();
         break;
+      case "quotas":
+        await projectQuotasDialog();
+        break;
       case "project-trash":
         state.projectTrash = !state.projectTrash;
         state.folderId = null;
@@ -912,7 +1053,7 @@ async function route() {
     else if (page === "project") await projectPage();
     else if (page === "activity") await activityPage();
     else if (page === "security") await securityPage();
-    else if (page === "settings") settingsPage();
+    else if (page === "settings") await settingsPage();
     else if (page === "admin") await adminPage();
     else workspacePage();
   } catch (e) {

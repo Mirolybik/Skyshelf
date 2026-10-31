@@ -19,12 +19,14 @@ const { StorageService } = require('./services/storage-service');
 const { AuditService } = require('./services/audit-service');
 const { AuthService } = require('./services/auth-service');
 const { ProjectService } = require('./services/project-service');
+const { SubscriptionService } = require('./services/subscription-service');
 const { createObjectStore, LocalObjectStore } = require('./services/object-store');
 const { AuthController, SESSION_COOKIE } = require('./controllers/auth-controller');
 const { StorageController } = require('./controllers/storage-controller');
 const { ProjectController } = require('./controllers/project-controller');
 const { SecurityController } = require('./controllers/security-controller');
 const { AdminController } = require('./controllers/admin-controller');
+const { SubscriptionController } = require('./controllers/subscription-controller');
 
 async function buildApp(config = new AppConfig(), overrides = {}) {
   const db = overrides.db ?? new Database(config.dbUrl);
@@ -45,8 +47,14 @@ async function buildApp(config = new AppConfig(), overrides = {}) {
   });
   const projects = new ProjectService({
     projects: repos.projects, memberships: repos.memberships, accounts: repos.accounts,
-    tasks: repos.tasks, files: repos.files, submissions: repos.submissions,
-    crypto, audit,
+    tasks: repos.tasks, files: repos.files, versions: repos.versions, quotas: repos.quotas,
+    submissions: repos.submissions, crypto, audit,
+  });
+  const subscriptions = new SubscriptionService({
+    subscriptions: repos.subscriptions, accounts: repos.accounts, projects: repos.projects,
+    memberships: repos.memberships, files: repos.files, folders: repos.folders,
+    versions: repos.versions, shares: repos.shares, submissions: repos.submissions,
+    tasks: repos.tasks, quotas: repos.quotas, objects, audit, config, projectService: projects,
   });
   const storage = new StorageService({
     files: repos.files, folders: repos.folders, shares: repos.shares, accounts: repos.accounts,
@@ -54,7 +62,10 @@ async function buildApp(config = new AppConfig(), overrides = {}) {
     objects, crypto, audit, projectService: projects, config,
   });
 
-  const services = { config, db, repos, objects, crypto, sessions, totp, audit, auth, projects, storage };
+  const services = {
+    config, db, repos, objects, crypto, sessions, totp, audit, auth,
+    projects, storage, subscriptions,
+  };
 
   const fastifyOpts = { logger: { level: process.env.LOG_LEVEL || 'info' } };
   if (config.httpsKeyFile && config.httpsCertFile && fs.existsSync(config.httpsKeyFile) && fs.existsSync(config.httpsCertFile)) {
@@ -108,6 +119,7 @@ async function buildApp(config = new AppConfig(), overrides = {}) {
   new ProjectController(services).register(app);
   new SecurityController(services).register(app);
   new AdminController(services).register(app);
+  new SubscriptionController(services).register(app);
 
   app.setNotFoundHandler((_request, reply) => {
     reply.code(404).type('application/json').send({ message: 'Объект не найден или недоступен.' });
@@ -138,6 +150,39 @@ async function createObjectStoreSafe(config) {
   }
 }
 
+async function seedDemoAccounts(services) {
+  const password = process.env.DEMO_PASSWORD || 'SkyShelfDemo2026!';
+  const demoUsers = [
+    { email: 'demo@skyshelf.local', name: 'Демо Администратор', role: 'ADMIN', plan: 'TEAM' },
+    { email: 'anna@skyshelf.local', name: 'Анна Смирнова', role: 'USER', plan: 'PERSONAL' },
+    { email: 'ilya@skyshelf.local', name: 'Илья Ковалёв', role: 'USER', plan: 'START' },
+  ];
+  for (const user of demoUsers) {
+    try {
+      let account = await services.repos.accounts.findByEmail(user.email);
+      if (!account) {
+        account = await services.repos.accounts.insert({
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          plan: user.plan,
+          passwordHash: await services.crypto.hashPassword(password),
+        });
+        console.log(`[demo] создан аккаунт ${user.email} (${user.role})`);
+      } else if (account.role !== user.role) {
+        await services.repos.accounts.update(account.id, { role: user.role });
+        console.log(`[demo] обновлена роль для ${user.email} на ${user.role}`);
+      }
+      if (SubscriptionService.paid(account.plan ?? user.plan)) {
+        const existing = await services.repos.subscriptions.findByAccount(account.id);
+        if (!existing) await services.subscriptions.ensureAccount(account.id, account.plan ?? user.plan);
+      }
+    } catch (error) {
+      console.error(`[demo] не удалось подготовить аккаунт ${user.email}:`, error);
+    }
+  }
+}
+
 async function main() {
   const config = new AppConfig();
   const { app, db, services } = await buildApp(config);
@@ -150,28 +195,19 @@ async function main() {
     console.warn('[migrate] предупреждение при авто-миграции:', err.message);
   }
 
-  if (config.demo) {
-    const DEMO_EMAIL = 'demo@skyshelf.local';
-    const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'SkyShelfDemo2026!';
+  if (config.demo) await seedDemoAccounts(services);
+
+  const purgeExpired = async () => {
     try {
-      const existing = await services.repos.accounts.findByEmail(DEMO_EMAIL);
-      if (!existing) {
-        await services.repos.accounts.insert({
-          email: DEMO_EMAIL,
-          name: 'Демо Пользователь',
-          role: 'ADMIN',
-          plan: 'TEAM',
-          passwordHash: await services.crypto.hashPassword(DEMO_PASSWORD),
-        });
-        console.log(`[demo] создан администратор ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
-      } else if (existing.role !== 'ADMIN') {
-        await services.repos.accounts.update(existing.id, { role: 'ADMIN' });
-        console.log(`[demo] аккаунту ${DEMO_EMAIL} назначена роль ADMIN`);
-      }
+      const purged = await services.subscriptions.sweep();
+      if (purged.length) console.log(`[subscriptions] очищено пространств: ${purged.length}`);
     } catch (error) {
-      console.error('[demo] не удалось подготовить тестовый аккаунт:', error);
+      console.error('[subscriptions] плановая очистка не выполнена:', error.message);
     }
-  }
+  };
+  await purgeExpired();
+  const sweepTimer = setInterval(purgeExpired, config.subscriptionSweepIntervalMs);
+  if (sweepTimer.unref) sweepTimer.unref();
 
   try {
     await app.listen({ port: config.port, host: config.host });
@@ -180,7 +216,9 @@ async function main() {
     await db.close();
     process.exit(1);
   }
+
   const shutdown = async () => {
+    clearInterval(sweepTimer);
     await app.close();
     await db.close();
     process.exit(0);
